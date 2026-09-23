@@ -486,15 +486,46 @@ def html_block(content: str):
 
 
 def connect_db(cfg):
-    return mysql.connector.connect(
-        host=cfg["host"],
-        port=int(cfg["port"]),
-        user=cfg["user"],
-        password=cfg["password"],
-        database=DB_NAME,
-        connection_timeout=5,
-        autocommit=True,
-    )
+    connect_args = {
+        "host": cfg["host"],
+        "port": int(cfg["port"]),
+        "user": cfg["user"],
+        "password": cfg["password"],
+        "database": cfg.get("database", DB_NAME),
+        "connection_timeout": 10,
+        "autocommit": True,
+    }
+
+    # Aiven/Streamlit Cloud requires an encrypted MySQL connection.
+    # Local MySQL continues to work without any special SSL settings.
+    if cfg.get("ssl_required", False):
+        connect_args["ssl_disabled"] = False
+
+    return mysql.connector.connect(**connect_args)
+
+
+def get_cloud_db_config():
+    """Return Streamlit Cloud/Aiven MySQL config when secrets are available."""
+    try:
+        if "mysql" not in st.secrets:
+            return None
+
+        secret_cfg = st.secrets["mysql"]
+
+        required = ["host", "port", "user", "password"]
+        if any(key not in secret_cfg or not str(secret_cfg[key]).strip() for key in required):
+            return None
+
+        return {
+            "host": str(secret_cfg["host"]).strip(),
+            "port": int(secret_cfg["port"]),
+            "user": str(secret_cfg["user"]).strip(),
+            "password": str(secret_cfg["password"]),
+            "database": str(secret_cfg.get("database", DB_NAME)).strip(),
+            "ssl_required": True,
+        }
+    except Exception:
+        return None
 
 
 def query_df(cfg, sql, params=None):
@@ -820,38 +851,42 @@ if not st.session_state.authenticated:
                 <div class="eyebrow">Secure project gateway</div>
                 <div class="section-title">Connect to Acoustic Intelligence</div>
                 <div class="section-subtitle">
-                    Enter the credentials for your local MySQL project database.
+                    Connect securely to the project MySQL database. Streamlit Cloud uses protected App Secrets; local runs can use your local MySQL credentials.
                     The password remains masked.
                 </div>
             </div>
             """
         )
 
-        with st.form("login_form", clear_on_submit=False):
-            host = st.text_input("MySQL host", value="localhost")
-            port = st.number_input("MySQL port", min_value=1, max_value=65535, value=3306, step=1)
-            username = st.text_input("MySQL username", value="")
-            password = st.text_input("MySQL password", type="password", value="")
-            submitted = st.form_submit_button("CONNECT TO ACOUSTIC INTELLIGENCE")
+        # --------------------------------------------------------
+        # DATABASE CONNECTION MODE
+        # --------------------------------------------------------
+        # On Streamlit Cloud, credentials are read from App Secrets.
+        # Locally, the original manual MySQL login remains available.
+        cloud_cfg = get_cloud_db_config()
 
-        if submitted:
-            if not username.strip() or not password:
-                st.error("Enter both the MySQL username and password.")
-            else:
-                cfg = {
-                    "host": host.strip() or "localhost",
-                    "port": int(port),
-                    "user": username.strip(),
-                    "password": password,
-                }
+        if cloud_cfg is not None:
+            html_block(
+                """
+                <div class="info-card" style="margin-top:14px;">
+                    <h3>☁️ Remote project database detected</h3>
+                    <p>
+                        Streamlit Cloud is configured to use the secure remote MySQL
+                        project database. Your database credentials are stored in
+                        Streamlit Secrets and are not displayed in the interface.
+                    </p>
+                </div>
+                """
+            )
 
-                with st.spinner("Verifying database and project tables..."):
-                    ok, message = validate_database(cfg)
+            if st.button("CONNECT TO ACOUSTIC INTELLIGENCE", width="stretch"):
+                with st.spinner("Verifying remote database and project tables..."):
+                    ok, message = validate_database(cloud_cfg)
 
                 if ok:
                     try:
-                        core_df = load_core_data(cfg)
-                        feature_df = load_features(cfg)
+                        core_df = load_core_data(cloud_cfg)
+                        feature_df = load_features(cloud_cfg)
 
                         if core_df.empty:
                             st.error("The database connection succeeded, but the joined project dataset is empty.")
@@ -859,16 +894,68 @@ if not st.session_state.authenticated:
                             st.error("The database connection succeeded, but acoustic_features is empty.")
                         else:
                             st.session_state.authenticated = True
-                            st.session_state.db_cfg = cfg
+                            st.session_state.db_cfg = cloud_cfg
                             st.session_state.core_df = core_df
                             st.session_state.feature_df = feature_df
                             st.session_state.focus_recording = core_df.iloc[0]["recording_id"]
-                            st.success("Database verified. Opening the Acoustic Intelligence Console...")
+                            st.success("Remote database verified. Opening the Acoustic Intelligence Console...")
                             st.rerun()
                     except Exception as exc:
                         st.error(f"Connected to MySQL, but the project data could not be loaded: {exc}")
                 else:
-                    st.error(f"Database connection failed: {message}")
+                    st.error(f"Remote database connection failed: {message}")
+
+        else:
+            with st.form("login_form", clear_on_submit=False):
+                host = st.text_input("MySQL host", value="localhost")
+                port = st.number_input(
+                    "MySQL port",
+                    min_value=1,
+                    max_value=65535,
+                    value=3306,
+                    step=1,
+                )
+                username = st.text_input("MySQL username", value="")
+                password = st.text_input("MySQL password", type="password", value="")
+                submitted = st.form_submit_button("CONNECT TO ACOUSTIC INTELLIGENCE")
+
+            if submitted:
+                if not username.strip() or not password:
+                    st.error("Enter both the MySQL username and password.")
+                else:
+                    cfg = {
+                        "host": host.strip() or "localhost",
+                        "port": int(port),
+                        "user": username.strip(),
+                        "password": password,
+                        "database": DB_NAME,
+                        "ssl_required": False,
+                    }
+
+                    with st.spinner("Verifying database and project tables..."):
+                        ok, message = validate_database(cfg)
+
+                    if ok:
+                        try:
+                            core_df = load_core_data(cfg)
+                            feature_df = load_features(cfg)
+
+                            if core_df.empty:
+                                st.error("The database connection succeeded, but the joined project dataset is empty.")
+                            elif feature_df.empty:
+                                st.error("The database connection succeeded, but acoustic_features is empty.")
+                            else:
+                                st.session_state.authenticated = True
+                                st.session_state.db_cfg = cfg
+                                st.session_state.core_df = core_df
+                                st.session_state.feature_df = feature_df
+                                st.session_state.focus_recording = core_df.iloc[0]["recording_id"]
+                                st.success("Database verified. Opening the Acoustic Intelligence Console...")
+                                st.rerun()
+                        except Exception as exc:
+                            st.error(f"Connected to MySQL, but the project data could not be loaded: {exc}")
+                    else:
+                        st.error(f"Database connection failed: {message}")
 
     html_block(
         """
