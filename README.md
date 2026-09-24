@@ -8,6 +8,27 @@
   <b>Software-Defined Acoustic Intelligence • Multi-Model Anomaly Detection • Spatiotemporal Investigation</b>
 </p>
 
+---
+
+## 🚀 Live Demo
+
+<div align="center">
+
+### 🖥️ Try the Interactive Acoustic Intelligence Console
+
+<a href="https://gradtwin-project-s42qzgeh95fr37wtnp6kde.streamlit.app/" target="_blank">
+  <img src="https://img.shields.io/badge/🚀%20LIVE%20DEMO-Open%20Streamlit%20App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white">
+</a>
+
+<br><br>
+
+**Explore the interactive anomaly investigation console powered by Streamlit, MySQL and multi-model acoustic analysis.**
+
+</div>
+
+---
+
+
 <br>
 
 <img src="https://img.shields.io/badge/Python-3.x-3776AB?style=for-the-badge&logo=python&logoColor=white">
